@@ -1,0 +1,8 @@
+{
+  "name": "office-halloween-trivia",
+  "version": "1.0.0",
+  "description": "Kahoot-style Halloween trivia for the office LAN. No accounts, no dependencies.",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
