@@ -94,7 +94,8 @@ function broadcast() {
 // ---------- HTTP ----------
 const MIME = { ".html": "text/html; charset=utf-8", ".css": "text/css", ".js": "text/javascript", ".png": "image/png", ".svg": "image/svg+xml" };
 function serveStatic(file, res) {
-  const fp = path.join(__dirname, "public", file);
+  let fp = path.join(__dirname, "public", file);
+  if (!fs.existsSync(fp)) fp = path.join(__dirname, file); // files uploaded without the public folder
   fs.readFile(fp, (err, data) => {
     if (err) { res.writeHead(404); return res.end("Not found"); }
     res.writeHead(200, { "Content-Type": MIME[path.extname(fp)] || "application/octet-stream", "Cache-Control": "no-store" });
