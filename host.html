@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Halloween Trivia — Host</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Nunito:wght@500;700;900&display=swap">
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+<div id="app" class="app"><div class="wait" style="margin-top:120px"><span class="pulse"></span><br><br>Connecting…</div></div>
+<script>
+const KEY = new URLSearchParams(location.search).get("key");
+const SYM = ["▲","◆","●","■"];
+const $ = s => document.querySelector(s);
+const app = $("#app");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let S = null, offset = 0, lastPhaseKey = "", qrDrawn = false;
+
+function remaining(){ if(!S || S.phase !== "question") return 0; return Math.max(0, S.dur - (Date.now() - offset - S.openedAt) / 1000); }
+async function act(a){ try{ await fetch(`/host/${a}?key=${KEY}`, {method:"POST"}); }catch{ alert("Server not reachable"); } }
+function reset(){ if(confirm("Reset the game? All players and scores will be deleted.")) act("reset"); }
+
+function ringSVG(r){ const C = 2*Math.PI*52;
+  return `<div class="ring"><svg width="120" height="120" viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="none" stroke="#2c1550" stroke-width="12"/><circle id="ringArc" cx="60" cy="60" r="52" fill="none" stroke="${r<5?'var(--blood)':'var(--pumpkin)'}" stroke-width="12" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C*(1-r/S.dur)}"/></svg><div class="n" id="ringN">${Math.ceil(r)}</div></div>`; }
+
+function tick(){ if(!S || S.phase !== "question") return;
+  const r = remaining(), C = 2*Math.PI*52, arc = $("#ringArc"), n = $("#ringN");
+  if(arc){ arc.setAttribute("stroke-dashoffset", C*(1-r/S.dur)); arc.setAttribute("stroke", r<5?"var(--blood)":"var(--pumpkin)"); }
+  if(n) n.textContent = Math.ceil(r);
+  const b = $("#revealBtn"); if(b && r<=0) b.textContent = "Reveal answer";
+}
+setInterval(tick, 200);
+
+function options(q, reveal, dist){ const tot = dist ? dist.reduce((a,b)=>a+b,0) : 0;
+  return q.o.map((o,i)=>`<div class="opt ${"abcd"[i]} ${reveal&&i!==reveal.a?"dim":""} ${reveal&&i===reveal.a?"win":""}"><span class="sym">${SYM[i]}</span><span>${esc(o)}</span>${dist?`<span class="bar">${dist[i]}${tot?` · ${Math.round(100*dist[i]/tot)}%`:""}</span>`:""}</div>`).join(""); }
+function boardHTML(rows){ if(!rows||!rows.length) return `<p class="muted center">No players yet.</p>`;
+  return `<ol class="board">${rows.map(p=>`<li><span class="rk">${p.rank}</span><span>${esc(p.name)}</span><span class="sc">${p.score}</span></li>`).join("")}</ol>`; }
+function podiumHTML(rows){ const p=(i,cls,label)=> rows[i]?`<div class="pod ${cls}"><div class="place">${label}</div><div class="name">${esc(rows[i].name)}</div><div class="pts">${rows[i].score} pts</div></div>`:`<div class="pod ${cls}"><div class="place">${label}</div><div class="name muted">—</div></div>`;
+  return `<div class="podium">${p(1,"p2","2")}${p(0,"p1","1")}${p(2,"p3","3")}</div>`; }
+
+function render(){
+  const n = S.players, q = S.q, h = S.host, last = q+1 >= S.total;
+  const top = `<div class="top"><span><span class="tag">Host view</span> &nbsp; ${n} player${n===1?"":"s"}</span><button class="btn ghost small" onclick="reset()">Reset game</button></div>`;
+  let body = "", ctl = "";
+  if(S.phase === "lobby"){
+    body = `<div class="wrap"><div class="host-hero"><div><h1>Office Halloween Trivia</h1><p style="font-size:22px;margin:14px 0 4px">${S.total} questions. 4 rounds. Points for being right, bonus for being fast.</p><p class="muted">Scan the code, type your name and wait for the first question.</p>
+      <div class="players">${h.names.map(x=>`<span class="chip">${esc(x)}</span>`).join("") || `<span class="muted">Waiting for the first brave soul…</span>`}</div></div>
+      <div class="qr-card"><h2 style="font-size:26px">Join on your phone</h2><div id="qr"></div><div class="link">${esc(h.joinUrl)}</div></div></div></div>`;
+    ctl = `<button class="btn" onclick="act('start')" ${n?"":"disabled"}>Start the quiz</button>`;
+  } else if(S.phase === "question" || S.phase === "reveal"){
+    const reveal = S.phase === "reveal";
+    body = `<div class="wrap"><div class="qhead"><span>Round ${S.round} · Question ${q+1} of ${S.total}</span><span>${h.answered} / ${n} answered</span>${reveal?"":ringSVG(remaining())}</div>
+      <h2 class="question">${esc(S.question.t)}</h2>
+      <div class="opts">${options(S.question, S.reveal, reveal ? S.reveal.dist : null)}</div>
+      ${reveal?`<div class="fact"><b>Did you know?</b> ${esc(S.reveal.f)}</div>`:""}</div>`;
+    ctl = reveal
+      ? `<button class="btn ghost" onclick="act('board')">Show standings</button><button class="btn" onclick="act('next')">${last?"Final podium":"Next question"}</button>`
+      : `<button class="btn" id="revealBtn" onclick="act('reveal')">${remaining()<=0?"Reveal answer":"Reveal answer now"}</button>`;
+  } else if(S.phase === "leaderboard"){
+    body = `<div class="wrap"><h2 style="font-size:clamp(32px,5vw,56px);color:var(--pumpkin)">Standings after round ${S.round}</h2><p class="muted">Question ${q+1} of ${S.total}</p>${boardHTML(h.board)}</div>`;
+    ctl = `<button class="btn" onclick="act('next')">${last?"Final podium":"Next question"}</button>`;
+  } else if(S.phase === "podium"){
+    body = `<div class="wrap center"><h1 style="font-size:clamp(40px,7vw,80px);color:var(--pumpkin)">The winners</h1>${podiumHTML(h.board)}<div style="max-width:600px;margin:30px auto 0;text-align:left">${boardHTML(h.board)}</div></div>`;
+    ctl = `<button class="btn ghost" onclick="reset()">Play again</button>`;
+  }
+  app.innerHTML = top + body + `<div class="controls">${ctl}</div>`;
+  if(S.phase === "lobby" && window.QRCode && $("#qr")){ try{ new QRCode($("#qr"), {text:h.joinUrl, width:240, height:240, colorDark:"#0d0617", colorLight:"#f3e9d2", correctLevel:QRCode.CorrectLevel.M}); }catch{} }
+}
+
+function connect(){
+  const es = new EventSource(`/events?key=${KEY}`);
+  es.onmessage = e => { S = JSON.parse(e.data); offset = Date.now() - S.now; render(); };
+  es.onerror = () => { es.close(); setTimeout(connect, 1500); };
+}
+connect();
+</script>
+</body>
+</html>

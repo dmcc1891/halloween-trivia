@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Halloween Trivia</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&family=Nunito:wght@500;700;900&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app" class="p-app"><div class="wait" style="margin-top:100px"><span class="pulse"></span><br><br>Connecting…</div></div>
+<script>
+const SYM = ["▲","◆","●","■"];
+const $ = s => document.querySelector(s);
+const app = $("#app");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let S = null, offset = 0, me = null, es = null, sending = false, lastKey = "";
+try{ me = JSON.parse(localStorage.getItem("trivia-me") || "null"); }catch{}
+
+function remaining(){ if(!S || S.phase !== "question") return 0; return Math.max(0, S.dur - (Date.now() - offset - S.openedAt) / 1000); }
+
+async function join(){
+  const name = ($("#nm").value || "").trim().slice(0,24); if(!name) return;
+  const btn = $("#joinBtn"); btn.disabled = true;
+  try{
+    const r = await fetch("/join", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({name})});
+    const d = await r.json();
+    if(!r.ok){ alert(d.error || "Could not join"); btn.disabled = false; return; }
+    me = d; localStorage.setItem("trivia-me", JSON.stringify(me));
+    connect(true);
+  }catch{ alert("Server not reachable. Are you on the office Wi-Fi?"); btn.disabled = false; }
+}
+async function answer(c){
+  if(sending || !S || S.phase !== "question" || S.you?.answered !== null) return;
+  if(remaining() <= 0) return;
+  sending = true;
+  document.querySelectorAll(".p-opts .opt").forEach(b => b.disabled = true);
+  try{
+    const r = await fetch("/answer", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id:me.id, token:me.token, q:S.q, c})});
+    if(!r.ok){ const d = await r.json(); if(r.status === 401){ me = null; localStorage.removeItem("trivia-me"); connect(true); } else { $("#lockmsg").textContent = d.error || "Not accepted"; } }
+  }catch{ $("#lockmsg").textContent = "Connection lost, try again"; document.querySelectorAll(".p-opts .opt").forEach(b => b.disabled = false); }
+  sending = false;
+}
+
+function tick(){ if(!S || S.phase !== "question") return;
+  const r = remaining(), pb = $("#pbar i"), pn = $("#pnum");
+  if(pb) pb.style.width = (100*r/S.dur) + "%";
+  if(pn) pn.textContent = Math.ceil(r);
+  if(r <= 0 && S.you && S.you.answered === null){ const l = $("#lockmsg"); if(l) l.textContent = "Time’s up"; document.querySelectorAll(".p-opts .opt").forEach(b => b.disabled = true); }
+}
+setInterval(tick, 200);
+
+function boardHTML(rows){ if(!rows||!rows.length) return `<p class="muted center">No players yet.</p>`;
+  return `<ol class="board">${rows.map(p=>`<li class="${me && p.id===me.id?"me":""}"><span class="rk">${p.rank}</span><span>${esc(p.name)}</span><span class="sc">${p.score}</span></li>`).join("")}</ol>`; }
+function podiumHTML(rows){ const p=(i,cls,label)=> rows[i]?`<div class="pod ${cls}"><div class="place">${label}</div><div class="name">${esc(rows[i].name)}</div><div class="pts">${rows[i].score} pts</div></div>`:`<div class="pod ${cls}"><div class="place">${label}</div><div class="name muted">—</div></div>`;
+  return `<div class="podium">${p(1,"p2","2")}${p(0,"p1","1")}${p(2,"p3","3")}</div>`; }
+
+function render(){
+  const you = S.you;
+  // Avoid wiping the name input while typing
+  const key = [S.phase, S.q, you ? you.answered : "x", you ? you.score : "-"].join("|");
+  if(key === lastKey && S.phase !== "lobby") return; lastKey = key;
+  const head = `<div class="p-head"><span>${you ? esc(you.name) : "Halloween Trivia"}</span><span>${you ? `${you.score} pts` : ""}</span></div>`;
+  let body = "";
+  if(!you){
+    if(S.phase === "podium"){ body = `<h2 style="font-size:30px;color:var(--pumpkin);text-align:center">Game over</h2>${podiumHTML(S.board||[])}`; }
+    else {
+      if($("#nm")) return; // keep the form as is
+      body = `<h1 class="p-title">Halloween Trivia</h1><p class="center muted">Type your name to join</p><input id="nm" class="name" maxlength="24" placeholder="Your name" autocomplete="off" onkeydown="if(event.key==='Enter')join()"><button id="joinBtn" class="btn" style="width:100%" onclick="join()">Join the game</button>${S.phase!=="lobby"?`<p class="note center">The quiz has already started. You can still join and score from the next question.</p>`:""}`;
+    }
+  } else if(S.phase === "lobby"){
+    body = `<h1 class="p-title">You’re in</h1><p class="center">Hi ${esc(you.name)}. Keep this screen open.</p><div class="wait"><span class="pulse"></span><br><br>Waiting for the host to start</div>`;
+  } else if(S.phase === "question"){
+    const r = remaining(), a = you.answered;
+    body = `<div class="pbar" id="pbar"><i style="width:${100*r/S.dur}%"></i></div><div class="p-head"><span>Question ${S.q+1} of ${S.total}</span><span><b id="pnum">${Math.ceil(r)}</b> s</span></div>
+      ${a !== null ? `<div class="wait" style="margin-top:60px"><div class="big">${SYM[a]}</div>Locked in. Wait for the reveal…</div>`
+        : `<p class="p-q">${esc(S.question.t)}</p><div class="p-opts">${S.question.o.map((o,i)=>`<button class="opt ${"abcd"[i]}" onclick="answer(${i})" ${r<=0?"disabled":""}><span class="sym">${SYM[i]}</span><span>${esc(o)}</span></button>`).join("")}</div><p class="note center" id="lockmsg">${r<=0?"Time’s up":"Faster answers earn more points"}</p>`}`;
+  } else if(S.phase === "reveal"){
+    const a = you.answered, ok = a === S.reveal.a;
+    body = `<div class="result ${a!==null?(ok?"ok":"ko"):""}"><h2>${a===null?"No answer":(ok?"Correct!":"Nope")}</h2><div class="big">+${you.pts||0}</div><p>The answer was <span class="pill">${SYM[S.reveal.a]} ${esc(S.question.o[S.reveal.a])}</span></p></div><div class="fact"><b>Did you know?</b> ${esc(S.reveal.f)}</div>`;
+  } else if(S.phase === "leaderboard"){
+    body = `<h2 style="font-size:30px;color:var(--pumpkin)">Standings</h2><p>You’re <b>#${you.rank}</b> of ${you.of} with ${you.score} pts</p>${boardHTML(S.board.slice(0,5))}`;
+  } else if(S.phase === "podium"){
+    body = `<h2 style="font-size:30px;color:var(--pumpkin);text-align:center">Game over</h2><p class="center">You finished <b>#${you.rank}</b> of ${you.of} with ${you.score} pts</p>${podiumHTML(S.board)}`;
+  }
+  app.innerHTML = head + body;
+}
+
+function connect(force){
+  if(es) es.close();
+  lastKey = "";
+  const qs = me ? `?id=${encodeURIComponent(me.id)}&token=${encodeURIComponent(me.token)}` : "";
+  es = new EventSource("/events" + qs);
+  es.onmessage = e => { S = JSON.parse(e.data); offset = Date.now() - S.now;
+    if(me && !S.you){ me = null; localStorage.removeItem("trivia-me"); lastKey = ""; } // server was reset
+    render(); };
+  es.onerror = () => { es.close(); setTimeout(() => connect(), 1500); };
+}
+connect();
+</script>
+</body>
+</html>
